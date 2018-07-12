@@ -6,7 +6,6 @@ import ColorPickerControl from './ColorPickerControl';
 import ColorSchemeControl from './ColorSchemeControl';
 import DatasourceControl from './DatasourceControl';
 import DateFilterControl from './DateFilterControl';
-import FilterControl from './FilterControl';
 import FixedOrMetricControl from './FixedOrMetricControl';
 import HiddenControl from './HiddenControl';
 import SelectAsyncControl from './SelectAsyncControl';
@@ -18,6 +17,7 @@ import TimeSeriesColumnControl from './TimeSeriesColumnControl';
 import ViewportControl from './ViewportControl';
 import VizTypeControl from './VizTypeControl';
 import MetricsControl from './MetricsControl';
+import AdhocFilterControl from './AdhocFilterControl';
 
 const controlMap = {
   AnnotationLayerControl,
@@ -28,7 +28,6 @@ const controlMap = {
   ColorSchemeControl,
   DatasourceControl,
   DateFilterControl,
-  FilterControl,
   FixedOrMetricControl,
   HiddenControl,
   SelectAsyncControl,
@@ -40,5 +39,6 @@ const controlMap = {
   ViewportControl,
   VizTypeControl,
   MetricsControl,
+  AdhocFilterControl,
 };
 export default controlMap;

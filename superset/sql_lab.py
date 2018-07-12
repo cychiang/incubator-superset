@@ -1,9 +1,6 @@
 # -*- coding: utf-8 -*-
 # pylint: disable=C,R,W
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import print_function
-from __future__ import unicode_literals
+from __future__ import absolute_import, division, print_function, unicode_literals
 
 from datetime import datetime
 import json
@@ -12,14 +9,12 @@ from time import sleep
 import uuid
 
 from celery.exceptions import SoftTimeLimitExceeded
-import numpy as np
-import pandas as pd
+from contextlib2 import contextmanager
 import sqlalchemy
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import NullPool
 
 from superset import app, dataframe, db, results_backend, security_manager, utils
-from superset.db_engine_specs import LimitMethod
 from superset.models.sql_lab import Query
 from superset.sql_parse import SupersetQuery
 from superset.utils import get_celery_app, QueryStatus
@@ -32,27 +27,6 @@ SQLLAB_TIMEOUT = config.get('SQLLAB_ASYNC_TIME_LIMIT_SEC', 600)
 
 class SqlLabException(Exception):
     pass
-
-
-def dedup(l, suffix='__'):
-    """De-duplicates a list of string by suffixing a counter
-
-    Always returns the same number of entries as provided, and always returns
-    unique values.
-
-    >>> print(','.join(dedup(['foo', 'bar', 'bar', 'bar'])))
-    foo,bar,bar__1,bar__2
-    """
-    new_l = []
-    seen = {}
-    for s in l:
-        if s in seen:
-            seen[s] += 1
-            s += suffix + str(seen[s])
-        else:
-            seen[s] = 0
-        new_l.append(s)
-    return new_l
 
 
 def get_query(query_id, session, retry_count=5):
@@ -75,64 +49,57 @@ def get_query(query_id, session, retry_count=5):
     return query
 
 
-def get_session(nullpool):
+@contextmanager
+def session_scope(nullpool):
+    """Provide a transactional scope around a series of operations."""
     if nullpool:
         engine = sqlalchemy.create_engine(
             app.config.get('SQLALCHEMY_DATABASE_URI'), poolclass=NullPool)
         session_class = sessionmaker()
         session_class.configure(bind=engine)
-        return session_class()
-    session = db.session()
-    session.commit()  # HACK
-    return session
-
-
-def convert_results_to_df(cursor_description, data):
-    """Convert raw query results to a DataFrame."""
-    column_names = (
-        [col[0] for col in cursor_description] if cursor_description else [])
-    column_names = dedup(column_names)
-
-    # check whether the result set has any nested dict columns
-    if data:
-        first_row = data[0]
-        has_dict_col = any([isinstance(c, dict) for c in first_row])
-        df_data = list(data) if has_dict_col else np.array(data, dtype=object)
+        session = session_class()
     else:
-        df_data = []
+        session = db.session()
+        session.commit()  # HACK
 
-    cdf = dataframe.SupersetDataFrame(
-        pd.DataFrame(df_data, columns=column_names))
-
-    return cdf
+    try:
+        yield session
+        session.commit()
+    except Exception as e:
+        session.rollback()
+        logging.exception(e)
+        raise
+    finally:
+        session.close()
 
 
 @celery_app.task(bind=True, soft_time_limit=SQLLAB_TIMEOUT)
 def get_sql_results(
-        ctask, query_id, rendered_query, return_results=True, store_results=False,
+    ctask, query_id, rendered_query, return_results=True, store_results=False,
         user_name=None):
     """Executes the sql query returns the results."""
-    try:
-        return execute_sql(
-            ctask, query_id, rendered_query, return_results, store_results, user_name)
-    except Exception as e:
-        logging.exception(e)
-        stats_logger.incr('error_sqllab_unhandled')
-        sesh = get_session(not ctask.request.called_directly)
-        query = get_query(query_id, sesh)
-        query.error_message = str(e)
-        query.status = QueryStatus.FAILED
-        query.tmp_table_name = None
-        sesh.commit()
-        raise
+    with session_scope(not ctask.request.called_directly) as session:
+
+        try:
+            return execute_sql(
+                ctask, query_id, rendered_query, return_results, store_results, user_name,
+                session=session)
+        except Exception as e:
+            logging.exception(e)
+            stats_logger.incr('error_sqllab_unhandled')
+            query = get_query(query_id, session)
+            query.error_message = str(e)
+            query.status = QueryStatus.FAILED
+            query.tmp_table_name = None
+            session.commit()
+            raise
 
 
 def execute_sql(
     ctask, query_id, rendered_query, return_results=True, store_results=False,
-    user_name=None,
+    user_name=None, session=None,
 ):
     """Executes the sql query returns the results."""
-    session = get_session(not ctask.request.called_directly)
 
     query = get_query(query_id, session)
     payload = dict(query_id=query_id)
@@ -144,9 +111,6 @@ def execute_sql(
     def handle_error(msg):
         """Local method handling error while processing the SQL"""
         troubleshooting_link = config['TROUBLESHOOTING_LINK']
-        msg = 'Error: {}. You can find common superset errors and their \
-            resolutions at: {}'.format(msg, troubleshooting_link) \
-            if troubleshooting_link else msg
         query.error_message = msg
         query.status = QueryStatus.FAILED
         query.tmp_table_name = None
@@ -155,6 +119,8 @@ def execute_sql(
             'status': query.status,
             'error': msg,
         })
+        if troubleshooting_link:
+            payload['link'] = troubleshooting_link
         return payload
 
     if store_results and not results_backend:
@@ -163,6 +129,7 @@ def execute_sql(
     # Limit enforced only for retrieving the data, not for the CTA queries.
     superset_query = SupersetQuery(rendered_query)
     executed_sql = superset_query.stripped()
+    SQL_MAX_ROWS = app.config.get('SQL_MAX_ROW')
     if not superset_query.is_select() and not database.allow_dml:
         return handle_error(
             'Only `SELECT` statements are allowed against this database')
@@ -177,10 +144,10 @@ def execute_sql(
                 query.user_id, start_dttm.strftime('%Y_%m_%d_%H_%M_%S'))
         executed_sql = superset_query.as_create_table(query.tmp_table_name)
         query.select_as_cta_used = True
-    elif (query.limit and superset_query.is_select() and
-            db_engine_spec.limit_method == LimitMethod.WRAP_SQL):
-        executed_sql = database.wrap_sql_limit(executed_sql, query.limit)
-        query.limit_used = True
+    if (superset_query.is_select() and SQL_MAX_ROWS and
+            (not query.limit or query.limit > SQL_MAX_ROWS)):
+        query.limit = SQL_MAX_ROWS
+        executed_sql = database.apply_limit_to_sql(executed_sql, query.limit)
 
     # Hook to allow environment-specific mutation (usually comments) to the SQL
     SQL_QUERY_MUTATOR = config.get('SQL_QUERY_MUTATOR')
@@ -225,22 +192,15 @@ def execute_sql(
         return handle_error(db_engine_spec.extract_error_message(e))
 
     logging.info('Fetching cursor description')
-    cursor_description = cursor.description
 
     if conn is not None:
         conn.commit()
         conn.close()
 
     if query.status == utils.QueryStatus.STOPPED:
-        return json.dumps(
-            {
-                'query_id': query.id,
-                'status': query.status,
-                'query': query.to_dict(),
-            },
-            default=utils.json_iso_dttm_ser)
+        return handle_error('The query has been stopped')
 
-    cdf = convert_results_to_df(cursor_description, data)
+    cdf = dataframe.SupersetDataFrame(data, cursor.description, db_engine_spec)
 
     query.rows = cdf.size
     query.progress = 100
