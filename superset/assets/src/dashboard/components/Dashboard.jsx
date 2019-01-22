@@ -1,8 +1,25 @@
-/* global window */
+/**
+ * Licensed to the Apache Software Foundation (ASF) under one
+ * or more contributor license agreements.  See the NOTICE file
+ * distributed with this work for additional information
+ * regarding copyright ownership.  The ASF licenses this file
+ * to you under the Apache License, Version 2.0 (the
+ * "License"); you may not use this file except in compliance
+ * with the License.  You may obtain a copy of the License at
+ *
+ *   http://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing,
+ * software distributed under the License is distributed on an
+ * "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+ * KIND, either express or implied.  See the License for the
+ * specific language governing permissions and limitations
+ * under the License.
+ */
 import React from 'react';
 import PropTypes from 'prop-types';
+import { t } from '@superset-ui/translation';
 
-import AlertsWrapper from '../../components/AlertsWrapper';
 import getChartIdsFromLayout from '../util/getChartIdsFromLayout';
 import DashboardBuilder from '../containers/DashboardBuilder';
 import {
@@ -22,8 +39,6 @@ import {
   LOG_ACTIONS_LOAD_DASHBOARD_PANE,
   LOG_ACTIONS_FIRST_DASHBOARD_LOAD,
 } from '../../logger';
-
-import { t } from '../../locales';
 
 import '../stylesheets/index.less';
 
@@ -87,9 +102,6 @@ class Dashboard extends React.PureComponent {
 
   componentWillReceiveProps(nextProps) {
     if (!nextProps.dashboardState.editMode) {
-      const version = nextProps.dashboardState.isV2Preview
-        ? 'v2-preview'
-        : 'v2';
       // log pane loads
       const loadedPaneIds = [];
       let minQueryStartTime = Infinity;
@@ -108,7 +120,7 @@ class Dashboard extends React.PureComponent {
             Logger.append(LOG_ACTIONS_LOAD_DASHBOARD_PANE, {
               ...restStats,
               duration: new Date().getTime() - paneMinQueryStart,
-              version,
+              version: 'v2',
             });
 
             if (!this.isFirstLoad) {
@@ -129,7 +141,7 @@ class Dashboard extends React.PureComponent {
         Logger.append(LOG_ACTIONS_FIRST_DASHBOARD_LOAD, {
           pane_ids: loadedPaneIds,
           duration: new Date().getTime() - minQueryStartTime,
-          version,
+          version: 'v2',
         });
         Logger.send(this.actionLog);
         this.isFirstLoad = false;
@@ -220,12 +232,7 @@ class Dashboard extends React.PureComponent {
   }
 
   render() {
-    return (
-      <div>
-        <AlertsWrapper initMessages={this.props.initMessages} />
-        <DashboardBuilder />
-      </div>
-    );
+    return <DashboardBuilder />;
   }
 }
 
