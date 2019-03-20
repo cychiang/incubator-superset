@@ -27,7 +27,7 @@ from urllib import parse
 from flask import (
     abort, flash, g, Markup, redirect, render_template, request, Response, url_for,
 )
-from flask_appbuilder import expose, SimpleFormView
+from flask_appbuilder import expose, Model, SimpleFormView
 from flask_appbuilder.actions import action
 from flask_appbuilder.models.sqla.interface import SQLAInterface
 from flask_appbuilder.security.decorators import has_access, has_access_api
@@ -36,7 +36,8 @@ from flask_babel import lazy_gettext as _
 import pandas as pd
 import simplejson as json
 import sqlalchemy as sqla
-from sqlalchemy import and_, create_engine, MetaData, or_, update
+from sqlalchemy import (
+    and_, Column, create_engine, ForeignKey, Integer, MetaData, or_, Table, update)
 from sqlalchemy.engine.url import make_url
 from sqlalchemy.exc import IntegrityError
 from werkzeug.routing import BaseConverter
@@ -100,13 +101,39 @@ def is_owner(obj, user):
     return obj and user in obj.owners
 
 
+SQLTable = Table(
+    'tables',
+    Model.metadata,  # pylint: disable=no-member
+    Column('id', Integer, primary_key=True),
+    Column('database_id', Integer, ForeignKey('dbs.id')),
+    extend_existing=True)
+
+
+class DatabaseFilter(SupersetFilter):
+    def apply(self, query, func):  # noqa
+        if security_manager.all_database_access():
+            return query
+        database_perms = self.get_view_menus('database_access')
+        return query.filter(self.model.perm.in_(database_perms))
+
+
 class SliceFilter(SupersetFilter):
     def apply(self, query, func):  # noqa
         if security_manager.all_datasource_access():
             return query
-        perms = self.get_view_menus('datasource_access')
+
         # TODO(bogdan): add `schema_access` support here
-        return query.filter(self.model.perm.in_(perms))
+        datasource_perms = self.get_view_menus('datasource_access')
+        database_perms = self.get_view_menus('database_access')
+        query = (
+            query.outerjoin(SQLTable, self.model.datasource_id == SQLTable.c.id)
+            .outerjoin(models.Database, models.Database.id == SQLTable.c.database_id)
+            .filter(or_(
+                models.Database.perm.in_(database_perms),
+                self.model.perm.in_(datasource_perms),
+            ))
+        )
+        return query
 
 
 class DashboardFilter(SupersetFilter):
@@ -124,7 +151,12 @@ class DashboardFilter(SupersetFilter):
         slice_ids_qry = (
             db.session
             .query(Slice.id)
-            .filter(Slice.perm.in_(datasource_perms))
+            .outerjoin(SQLTable, Slice.datasource_id == SQLTable.c.id)
+            .outerjoin(models.Database, models.Database.id == SQLTable.c.database_id)
+            .filter(or_(
+                models.Database.perm.in_(datasource_perms),
+                Slice.perm.in_(datasource_perms),
+            ))
         )
         owner_ids_qry = (
             db.session
@@ -146,7 +178,7 @@ class DashboardFilter(SupersetFilter):
 class DatabaseView(SupersetModelView, DeleteMixin, YamlExportMixin):  # noqa
     datamodel = SQLAInterface(models.Database)
 
-    list_title = _('List Databases')
+    list_title = _('Databases')
     show_title = _('Show Database')
     add_title = _('Add Database')
     edit_title = _('Edit Database')
@@ -187,7 +219,7 @@ class DatabaseView(SupersetModelView, DeleteMixin, YamlExportMixin):  # noqa
         'sqlalchemy_uri': utils.markdown(
             'Refer to the '
             '[SqlAlchemy docs]'
-            '(http://docs.sqlalchemy.org/en/rel_1_2/core/engines.html#'
+            '(https://docs.sqlalchemy.org/en/rel_1_2/core/engines.html#'
             'database-urls) '
             'for more information on how to structure your URI.', True),
         'expose_in_sqllab': _('Expose this DB in SQL Lab'),
@@ -210,10 +242,10 @@ class DatabaseView(SupersetModelView, DeleteMixin, YamlExportMixin):  # noqa
             'JSON string containing extra configuration elements.<br/>'
             '1. The ``engine_params`` object gets unpacked into the '
             '[sqlalchemy.create_engine]'
-            '(http://docs.sqlalchemy.org/en/latest/core/engines.html#'
+            '(https://docs.sqlalchemy.org/en/latest/core/engines.html#'
             'sqlalchemy.create_engine) call, while the ``metadata_params`` '
             'gets unpacked into the [sqlalchemy.MetaData]'
-            '(http://docs.sqlalchemy.org/en/rel_1_0/core/metadata.html'
+            '(https://docs.sqlalchemy.org/en/rel_1_0/core/metadata.html'
             '#sqlalchemy.schema.MetaData) call.<br/>'
             '2. The ``metadata_cache_timeout`` is a cache timeout setting '
             'in seconds for metadata fetch of this database. Specify it as '
@@ -262,6 +294,7 @@ class DatabaseView(SupersetModelView, DeleteMixin, YamlExportMixin):  # noqa
         'allow_multi_schema_metadata_fetch': _('Allow Multi Schema Metadata Fetch'),
         'backend': _('Backend'),
     }
+    base_filters = [['id', DatabaseFilter, lambda: []]]
 
     def pre_add(self, db):
         self.check_extra(db)
@@ -378,7 +411,7 @@ class CsvToDatabaseView(SimpleFormView):
             except OSError:
                 pass
             message = 'Table name {} already exists. Please pick another'.format(
-                form.name.data) if isinstance(e, IntegrityError) else e
+                form.name.data) if isinstance(e, IntegrityError) else str(e)
             flash(
                 message,
                 'danger')
@@ -446,7 +479,7 @@ class SliceModelView(SupersetModelView, DeleteMixin):  # noqa
     route_base = '/chart'
     datamodel = SQLAInterface(models.Slice)
 
-    list_title = _('List Charts')
+    list_title = _('Charts')
     show_title = _('Show Chart')
     add_title = _('Add Chart')
     edit_title = _('Edit Chart')
@@ -562,7 +595,7 @@ class DashboardModelView(SupersetModelView, DeleteMixin):  # noqa
     route_base = '/dashboard'
     datamodel = SQLAInterface(models.Dashboard)
 
-    list_title = _('List Dashboards')
+    list_title = _('Dashboards')
     show_title = _('Show Dashboard')
     add_title = _('Add Dashboard')
     edit_title = _('Edit Dashboard')
@@ -610,8 +643,9 @@ class DashboardModelView(SupersetModelView, DeleteMixin):  # noqa
     }
 
     def pre_add(self, obj):
-        obj.slug = obj.slug.strip() or None
+        obj.slug = obj.slug or None
         if obj.slug:
+            obj.slug = obj.slug.strip()
             obj.slug = obj.slug.replace(' ', '-')
             obj.slug = re.sub(r'[^\w\-]+', '', obj.slug)
         if g.user not in obj.owners:
@@ -694,7 +728,7 @@ appbuilder.add_view_no_menu(DashboardAddView)
 class LogModelView(SupersetModelView):
     datamodel = SQLAInterface(models.Log)
 
-    list_title = _('List Log')
+    list_title = _('Logs')
     show_title = _('Show Log')
     add_title = _('Add Log')
     edit_title = _('Edit Log')
@@ -810,7 +844,7 @@ class Superset(BaseSupersetView):
     @expose('/datasources/')
     def datasources(self):
         datasources = ConnectorRegistry.get_all_datasources(db.session)
-        datasources = [o.short_data for o in datasources]
+        datasources = [o.short_data for o in datasources if o.short_data.get('name')]
         datasources = sorted(datasources, key=lambda o: o['name'])
         return self.json_response(datasources)
 
@@ -1088,7 +1122,7 @@ class Superset(BaseSupersetView):
         if not slc:
             abort(404)
         endpoint = '/superset/explore/?form_data={}'.format(
-            parse.quote(json.dumps(form_data)),
+            parse.quote(json.dumps({'slice_id': slice_id})),
         )
         if request.args.get('standalone') == 'true':
             endpoint += '&standalone=true'
@@ -1119,7 +1153,7 @@ class Superset(BaseSupersetView):
 
     def get_raw_results(self, viz_obj):
         return self.json_response({
-            'data': viz_obj.get_df().to_dict('records'),
+            'data': viz_obj.get_df_payload()['df'].to_dict('records'),
         })
 
     def get_samples(self, viz_obj):
@@ -1524,12 +1558,17 @@ class Superset(BaseSupersetView):
             db.session
             .query(models.Database)
             .filter_by(id=db_id)
-            .one()
+            .first()
         )
-        schemas = database.all_schema_names(cache=database.schema_cache_enabled,
-                                            cache_timeout=database.schema_cache_timeout,
-                                            force=force_refresh)
-        schemas = security_manager.schemas_accessible_by_user(database, schemas)
+        if database:
+            schemas = database.all_schema_names(
+                cache=database.schema_cache_enabled,
+                cache_timeout=database.schema_cache_timeout,
+                force=force_refresh)
+            schemas = security_manager.schemas_accessible_by_user(database, schemas)
+        else:
+            schemas = []
+
         return Response(
             json.dumps({'schemas': schemas}),
             mimetype='application/json')
@@ -1768,7 +1807,7 @@ class Superset(BaseSupersetView):
                 .get('engine_params', {}))
             connect_args = engine_params.get('connect_args')
 
-            if configuration:
+            if configuration and connect_args is not None:
                 connect_args['configuration'] = configuration
 
             engine = create_engine(uri, **engine_params)
@@ -2146,6 +2185,7 @@ class Superset(BaseSupersetView):
             security_manager.can_access('can_save_dash', 'Superset')
         dash_save_perm = security_manager.can_access('can_save_dash', 'Superset')
         superset_can_explore = security_manager.can_access('can_explore', 'Superset')
+        superset_can_csv = security_manager.can_access('can_csv', 'Superset')
         slice_can_edit = security_manager.can_access('can_edit', 'SliceModelView')
 
         standalone_mode = request.args.get('standalone') == 'true'
@@ -2167,6 +2207,7 @@ class Superset(BaseSupersetView):
             'dash_save_perm': dash_save_perm,
             'dash_edit_perm': dash_edit_perm,
             'superset_can_explore': superset_can_explore,
+            'superset_can_csv': superset_can_csv,
             'slice_can_edit': slice_can_edit,
         })
 
@@ -2883,10 +2924,10 @@ appbuilder.add_view_no_menu(Superset)
 class CssTemplateModelView(SupersetModelView, DeleteMixin):
     datamodel = SQLAInterface(models.CssTemplate)
 
-    list_title = _('List Css Template')
-    show_title = _('Show Css Template')
-    add_title = _('Add Css Template')
-    edit_title = _('Edit Css Template')
+    list_title = _('CSS Templates')
+    show_title = _('Show CSS Template')
+    add_title = _('Add CSS Template')
+    edit_title = _('Edit CSS Template')
 
     list_columns = ['template_name']
     edit_columns = ['template_name', 'css']

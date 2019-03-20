@@ -1,3 +1,21 @@
+<!--
+Licensed to the Apache Software Foundation (ASF) under one
+or more contributor license agreements.  See the NOTICE file
+distributed with this work for additional information
+regarding copyright ownership.  The ASF licenses this file
+to you under the Apache License, Version 2.0 (the
+"License"); you may not use this file except in compliance
+with the License.  You may obtain a copy of the License at
+
+  http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing,
+software distributed under the License is distributed on an
+"AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+KIND, either express or implied.  See the License for the
+specific language governing permissions and limitations
+under the License.
+-->
 ## Refresh documentation website
 
 Every once in a while we want to compile the documentation and publish it.
@@ -65,7 +83,7 @@ git push apache 0.25 --tags
 # superset package. Committers that want to ship releases
 # should have this access.
 # You'll also need a `.pypirc` as specified here:
-# http://peterdowns.com/posts/first-time-with-pypi.html
+# https://gist.github.com/davydany/b08acef08f75fe297e13ae4d24ce9f4d
 ./pypi_push.sh
 
 # publish an update to the CHANGELOG.md for the right version range

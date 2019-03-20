@@ -1,3 +1,20 @@
+..  Licensed to the Apache Software Foundation (ASF) under one
+    or more contributor license agreements.  See the NOTICE file
+    distributed with this work for additional information
+    regarding copyright ownership.  The ASF licenses this file
+    to you under the Apache License, Version 2.0 (the
+    "License"); you may not use this file except in compliance
+    with the License.  You may obtain a copy of the License at
+
+..    http://www.apache.org/licenses/LICENSE-2.0
+
+..  Unless required by applicable law or agreed to in writing,
+    software distributed under the License is distributed on an
+    "AS IS" BASIS, WITHOUT WARRANTIES OR CONDITIONS OF ANY
+    KIND, either express or implied.  See the License for the
+    specific language governing permissions and limitations
+    under the License.
+
 Visualization Tools
 ===================
 
@@ -1820,17 +1837,17 @@ Need to add a new Country?
 To add a new country in country map tools, we need to follow the following steps :
 
 1. You need shapefiles which contain data of your map.
-   You can get this file on this site: http://www.diva-gis.org/gdata
+   You can get this file on this site: https://www.diva-gis.org/gdata
 
 2. You need to add ISO 3166-2 with column name ISO for all record in your file. 
    It's important because it's a norm for mapping your data with geojson file
 
 3. You need to convert shapefile to geojson file.
-   This action can make with ogr2ogr tools: http://www.gdal.org/ogr2ogr.html
+   This action can make with ogr2ogr tools: https://www.gdal.org/ogr2ogr.html
 
 4. Put your geojson file in next folder : superset/assets/src/visualizations/CountryMap/countries with the next name : nameofyourcountries.geojson
 
-5. You can to reduce size of geojson file on this site: http://mapshaper.org/
+5. You can to reduce size of geojson file on this site: https://mapshaper.org/
 
 6. Go in file superset/assets/src/explore/controls.jsx
 
